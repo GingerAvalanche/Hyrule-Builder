@@ -47,7 +47,7 @@ pub struct Unbuilder<'a> {
 fn unbuild_aamp(data: &[u8], out: &Path) -> Result<()> {
     fs::write(
         out,
-        aamp::ParameterIO::from_binary(&yaz0::decompress_if(data)?)?.to_text(),
+        aamp::ParameterIO::from_binary(data)?.to_text(),
     )?;
     Ok(())
 }
@@ -56,7 +56,7 @@ fn unbuild_aamp(data: &[u8], out: &Path) -> Result<()> {
 fn unbuild_byml(data: &[u8], out: &Path) -> Result<()> {
     fs::write(
         out,
-        byml::Byml::from_binary(&yaz0::decompress_if(data)?)?.to_text(),
+        byml::Byml::from_binary(data)?.to_text(),
     )?;
     Ok(())
 }
@@ -181,7 +181,7 @@ impl Unbuilder<'_> {
         } else if BYML_EXTS.contains(&ext) {
             unbuild_byml(&data, &out.with_extension(jstr!("{ext}.yml")))?;
         } else if botw_utils::extensions::SARC_EXTS.contains(&ext) && !data.is_empty() {
-            let sarc = Sarc::read(&data)?;
+            let sarc = Sarc::new(&data)?;
             if file_name.starts_with("Bootup_") && file_name.len() == 16 {
                 // if self.no_msyt {
                 //     drop(sarc);
@@ -207,21 +207,21 @@ impl Unbuilder<'_> {
 
     pub fn unbuild_actorinfo(&self, file: &Path) -> Result<()> {
         println!("Unbuilding actor info...");
-        let actorinfo = byml::Byml::from_binary(&yaz0::decompress_if(fs::read(file)?)?)?;
+        let actorinfo = byml::Byml::from_binary(fs::read(file)?)?;
         fs::create_dir_all(self.out_content().join("Actor/ActorInfo"))?;
         actorinfo
-            .as_hash()?
+            .as_map()?
             .get("Actors")
             .context("Invalid actor info file")?
             .as_array()?
             .into_par_iter()
             .try_for_each(|a| -> Result<()> {
-                let actor = a.as_hash()?;
+                let actor = a.as_map()?;
                 fs::write(
                     self.out_content()
                         .join("Actor/ActorInfo")
                         .join(jstr!(r#"{actor["name"].as_string()?}.info.yml"#)),
-                    byml::Byml::Hash(actor.clone()).to_text(),
+                    byml::Byml::Map(actor.clone()).to_text(),
                 )?;
                 Ok(())
             })?;
@@ -231,7 +231,7 @@ impl Unbuilder<'_> {
     fn unbuild_eventinfo(&self, data: &[u8]) -> Result<()> {
         println!("Unbuilding event info...");
         let eventinfo = byml::Byml::from_binary(&yaz0::decompress(data)?)?;
-        let eventinfo = eventinfo.as_hash()?;
+        let eventinfo = eventinfo.as_map()?;
         fs::create_dir_all(self.out_content().join("Event/EventInfo"))?;
         let mut events: BTreeMap<String, BTreeMap<String, byml::Byml>> = BTreeMap::new();
         for (name, event) in eventinfo {
@@ -253,7 +253,10 @@ impl Unbuilder<'_> {
                         .join("Event/EventInfo")
                         .join(name)
                         .with_extension("info.yml"),
-                    byml::Byml::Hash(data).to_text(),
+                    byml::Byml::Map(
+                        data.iter().map(|(k, v)| (smartstring::alias::String::from(k), v.clone()))
+                        .collect()
+                    ).to_text(),
                 )?;
                 Ok(())
             })?;
@@ -301,7 +304,7 @@ impl Unbuilder<'_> {
                     && !EXCLUDE_UNPACK.contains(&name)
                     && !EXCLUDE_UNPACK_EXTS.contains(&ext)
                 {
-                    let subsarc = Sarc::read(file.data())?;
+                    let subsarc = Sarc::new(file.data())?;
                     self.unbuild_sarc(
                         subsarc,
                         if output.file_name().unwrap().to_str().unwrap() == "TitleBG.pack"
@@ -329,13 +332,13 @@ impl Unbuilder<'_> {
             .context("{} is missing a message SARC")?;
         let lang = &msg_pack.name().unwrap()[0xC..0x10];
         println!("Unbuilding {} texts...", lang);
-        let msg_sarc = Sarc::read(msg_pack.data())?;
+        let msg_sarc = Sarc::new(msg_pack.data())?;
         (0..msg_sarc.len())
             .into_par_iter()
             .try_for_each(|i| -> Result<()> {
-                let file = match msg_sarc.get_file_by_index(i) {
-                    Some(f) => f,
-                    None => return Ok(()),
+                let file = match msg_sarc.file_at(i) {
+                    Ok(f) => f,
+                    Err(_) => return Ok(()),
                 };
                 let out = self
                     .out_content()

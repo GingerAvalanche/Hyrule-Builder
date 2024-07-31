@@ -1,4 +1,4 @@
-#![feature(option_result_contains)]
+//#![feature(option_result_contains)]
 use crate::{
     builder::BuildConfig,
     settings::{ConfigCommand, Settings},

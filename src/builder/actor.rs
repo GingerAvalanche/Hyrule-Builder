@@ -4,7 +4,7 @@ use join_str::jstr;
 use path_slash::PathBufExt;
 use phf::phf_map;
 use roead::{
-    aamp::{hash_name, ParamList, ParameterIO},
+    aamp::{hash_name, ParameterIO},
     sarc::SarcWriter,
     yaz0::compress,
 };
@@ -192,21 +192,22 @@ impl<'a> Actor<'a> {
         let actor_link = ParameterIO::from_text(fs::read_to_string(&file)?)?;
         let root = builder.source_content();
         let files: Vec<PathBuf> = actor_link
+            .param_root
             .objects
             .get(hash_name("LinkTarget"))
             .context("Actor link missing LinkTarget")?
-            .params()
+            .0
             .iter()
-            .filter(|(k, v)| ACTOR_LINKS.contains_key(k) && v.as_string().unwrap() != "Dummy")
+            .filter(|(k, v)| ACTOR_LINKS.contains_key(&k.hash()) && v.as_str().unwrap() != "Dummy")
             .map(|(k, v)| -> Result<Vec<PathBuf>> {
                 let file = root.join(
                     ACTOR_LINKS
-                        .get(k)
+                        .get(&k.hash())
                         .unwrap()
-                        .yaml_path(v.as_string().unwrap()),
+                        .yaml_path(v.as_str().unwrap()),
                 );
                 let mut files: Vec<PathBuf> = vec![file.clone()];
-                match k {
+                match k.hash() {
                     110127898 => {
                         // ASUser
                         files.extend(process_aslist(&file)?);
@@ -265,7 +266,7 @@ impl<'a> Actor<'a> {
             }
             match self.builder.get_resource_data(&f) {
                 Ok(data) => pack.add_file(
-                    &filename.to_slash_lossy(),
+                    filename.to_slash_lossy(),
                     data,
                 ),
                 Err(e) => {
@@ -296,16 +297,17 @@ fn process_aslist(aslist_path: &Path) -> Result<Vec<PathBuf>> {
     let aslist = parse_aamp(aslist_path)?;
     let asroot = aslist_path.parent().unwrap().parent().unwrap().join("AS");
     Ok(aslist
-        .lists()
+        .param_root
+        .lists
         .get(hash_name("ASDefines"))
         .context("AS list missing ASDefines")?
-        .objects()
+        .objects
         .0
         .values()
         .filter_map(|def| {
-            def.params()
+            def.0
                 .get(&hash_name("Filename"))
-                .and_then(|p| p.as_string().ok())
+                .and_then(|p| p.as_str().ok())
                 .and_then(|p| {
                     if p == "Dummy" {
                         None
@@ -326,16 +328,17 @@ fn process_attcllist(attcllist_path: &Path) -> Result<Vec<PathBuf>> {
         .unwrap()
         .join("AttClient");
     Ok(attcllist
-        .lists()
+        .param_root
+        .lists
         .get(hash_name("AttClients"))
         .context("ATTCL list missing AttClients")?
-        .objects()
+        .objects
         .0
         .values()
         .filter_map(|def| {
-            def.params()
+            def.0
                 .get(&hash_name("FileName"))
-                .and_then(|p| p.as_string().ok())
+                .and_then(|p| p.as_str().ok())
                 .and_then(|p| {
                     if p == "Dummy" {
                         None
@@ -356,16 +359,17 @@ fn process_rgconfiglist(rgconfig_path: &Path) -> Result<Vec<PathBuf>> {
         .unwrap()
         .join("RagdollConfig");
     Ok(rgconfig
-        .lists()
+        .param_root
+        .lists
         .get(hash_name("ImpulseParamList"))
         .context("RgConfig list missing ImpulseParamList")?
-        .objects()
+        .objects
         .0
         .values()
         .filter_map(|def| {
-            def.params()
+            def.0
                 .get(&hash_name("FileName"))
-                .and_then(|p| p.as_string().ok())
+                .and_then(|p| p.as_str().ok())
                 .and_then(|p| {
                     if p == "Dummy" {
                         None
@@ -388,16 +392,17 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
         .unwrap()
         .join("Physics");
     let param_set = physics
+        .param_root
         .lists
         .get(hash_name("ParamSet"))
         .context("Physics missing ParamSet")?;
     let types = param_set
         .objects
-        .get(&1258832850)
+        .get(1258832850)
         .context("ParamSet missing 1258832850")?;
     let mut files: Vec<PathBuf> = vec![];
     if types
-        .params()
+        .0
         .get(&hash_name("use_ragdoll"))
         .context("Physics missing use_ragdoll")?
         .as_bool()?
@@ -411,12 +416,12 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
                     .0
                     .get(&hash_name("ragdoll_setup_file_path"))
                     .context("Missing ragdoll_setup_file_path")?
-                    .as_string()?,
+                    .as_str()?,
             ),
         )
     }
     if types
-        .params()
+        .0
         .get(&hash_name("use_support_bone"))
         .context("Physics missing use_support_bone")?
         .as_bool()?
@@ -430,14 +435,14 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
                     .0
                     .get(&hash_name("support_bone_setup_file_path"))
                     .context("Missing support_bone_setup_file_path")?
-                    .as_string()?
+                    .as_str()?
                     .to_owned()
                     + ".yml",
             ),
         )
     }
     if types
-        .params()
+        .0
         .get(&hash_name("use_cloth"))
         .context("Physics missing use_cloth")?
         .as_bool()?
@@ -454,7 +459,7 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
                     .0
                     .get(&hash_name("cloth_setup_file_path"))
                     .context("Missing cloth_setup_file_path")?
-                    .as_string()?,
+                    .as_str()?,
             ),
         )
     }
@@ -462,7 +467,7 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
         .0
         .get(&hash_name("use_rigid_body_set_num"))
         .context("Physics missing use_rigid_body_set_num")?
-        .as_int()?
+        .as_i32()?
         > 0
     {
         files.extend(
@@ -475,12 +480,12 @@ fn process_physics(physics_path: &Path) -> Result<Vec<PathBuf>> {
                 .values()
                 .filter_map(|l| {
                     l.objects
-                        .get(&4288596824)
+                        .get(4288596824)
                         .context("RigidBody missing 4288596824")
                         .unwrap()
-                        .params()
+                        .0
                         .get(&hash_name("setup_file_path"))
-                        .and_then(|p| p.as_string().ok())
+                        .and_then(|p| p.as_str().ok())
                         .map(|p| physics_root.join("RigidBody").join(p))
                 }),
         )

@@ -4,10 +4,11 @@ use anyhow::Context;
 use join_str::jstr;
 use path_slash::PathBufExt;
 use roead::{
-    byml::{Byml, BymlError, Hash},
+    byml::{Byml, Map},
     sarc::SarcWriter,
     yaz0::compress,
 };
+use smartstring::alias::String;
 use std::{
     collections::HashSet,
     ffi::OsStr,
@@ -64,7 +65,7 @@ impl<'a> Event<'a> {
         builder: &'a Builder,
         file: &Path,
     ) -> Result<(
-        std::collections::btree_map::IntoIter<String, Byml>,
+        std::collections::hash_map::IntoIter<String, Byml>,
         Option<Self>,
     )> {
         let name = file
@@ -73,16 +74,17 @@ impl<'a> Event<'a> {
             .to_str()
             .unwrap()
             .trim_end_matches(".info");
-        let event_info: Hash = {
-            if let Byml::Hash(hash) = Byml::from_text(fs::read_to_string(&file)?)? {
+        let event_info: Map = {
+            if let Byml::Map(hash) = Byml::from_text(fs::read_to_string(&file)?)
+                .with_context(|| jstr!("{name} failed to compile. This may be due to a mismatch between expected and actual scalars (SSCL)"))? {
                 Ok(hash
                     .into_iter()
-                    .map(|(k, v)| (jstr!("{name}<{&k}>"), v))
+                    .map(|(k, v)| (String::from(jstr!("{name}<{&k}>")), v))
                     .collect())
             } else {
-                Err(BymlError::TypeError)
+                Err(("{} not valid byml map", file.display()))
             }
-        }?;
+        }.unwrap();
         if builder.title_events.contains(name) {
             return Ok((event_info.into_iter(), None));
         }
@@ -92,12 +94,12 @@ impl<'a> Event<'a> {
         let camera_root = root.join("Camera").join(name);
         let main_exts = [Some(OsStr::new("bfevfl")), Some(OsStr::new("bfevtm"))];
         let files: HashSet<PathBuf> = find_subfiles(&event_info)?
-            .map(|file| event_flow_root.join(file))
+            .map(|file| event_flow_root.join(file.as_str()))
             .chain(
                 find_as_files(&event_info)?
-                    .map(|file| as_root.join(file).with_extension("bas.yml")),
+                    .map(|file| as_root.join(file.as_str()).with_extension("bas.yml")),
             )
-            .chain(find_camera_files(&event_info)?.map(|file| camera_root.join(file)))
+            .chain(find_camera_files(&event_info)?.map(|file| camera_root.join(file.as_str())))
             .chain(find_single_files(&event_info, name)?.map(|file| root.join(file)))
             .collect();
         if !files.is_empty()
@@ -125,7 +127,7 @@ impl<'a> Event<'a> {
                 Some(Self {
                     builder,
                     files,
-                    name: name.to_owned(),
+                    name: String::from(name),
                 }),
             ))
         } else {
@@ -161,7 +163,7 @@ impl<'a> Event<'a> {
                 filename = filename.with_extension("");
             }
             let data = self.builder.get_resource_data(&f)?;
-            pack.add_file(&filename.to_slash_lossy(), data);
+            pack.add_file(filename.to_slash_lossy(), data);
             Ok(())
         })?;
         let data = pack.to_binary();
@@ -172,11 +174,11 @@ impl<'a> Event<'a> {
     }
 }
 
-fn find_subfiles(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
+fn find_subfiles(event_info: &Map) -> Result<impl Iterator<Item = &smartstring::alias::String>> {
     Ok(event_info
         .values()
         .filter_map(|info| {
-            info.as_hash()
+            info.as_map()
                 .ok()
                 .and_then(|hash| hash.get("subfile"))
                 .and_then(|subfiles| subfiles.as_array().ok())
@@ -184,7 +186,7 @@ fn find_subfiles(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
                     subfiles
                         .iter()
                         .filter_map(|file| {
-                            file.as_hash()
+                            file.as_map()
                                 .ok()
                                 .and_then(|file_hash| file_hash.get("file"))
                                 .and_then(|file_val| file_val.as_string().ok())
@@ -195,11 +197,11 @@ fn find_subfiles(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
         .flatten())
 }
 
-fn find_as_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
+fn find_as_files(event_info: &Map) -> Result<impl Iterator<Item = &smartstring::alias::String>> {
     Ok(event_info
         .values()
         .filter_map(|info| {
-            info.as_hash()
+            info.as_map()
                 .ok()
                 .and_then(|hash| hash.get("as"))
                 .and_then(|subfiles| subfiles.as_array().ok())
@@ -207,7 +209,7 @@ fn find_as_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
                     subfiles
                         .iter()
                         .filter_map(|file| {
-                            file.as_hash()
+                            file.as_map()
                                 .ok()
                                 .and_then(|file_hash| file_hash.get("file"))
                                 .and_then(|file_val| file_val.as_string().ok())
@@ -218,11 +220,11 @@ fn find_as_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
         .flatten())
 }
 
-fn find_camera_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
+fn find_camera_files(event_info: &Map) -> Result<impl Iterator<Item = &smartstring::alias::String>> {
     Ok(event_info
         .values()
         .filter_map(|info| {
-            info.as_hash()
+            info.as_map()
                 .ok()
                 .and_then(|hash| hash.get("camera"))
                 .and_then(|subfiles| subfiles.as_array().ok())
@@ -230,7 +232,7 @@ fn find_camera_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
                     subfiles
                         .iter()
                         .filter_map(|file| {
-                            file.as_hash()
+                            file.as_map()
                                 .ok()
                                 .and_then(|file_hash| file_hash.get("file"))
                                 .and_then(|file_val| file_val.as_string().ok())
@@ -241,14 +243,14 @@ fn find_camera_files(event_info: &Hash) -> Result<impl Iterator<Item = &str>> {
         .flatten())
 }
 
-fn find_single_files(event_info: &Hash, name: &str) -> Result<impl Iterator<Item = PathBuf>> {
+fn find_single_files(event_info: &Map, name: &str) -> Result<impl Iterator<Item = PathBuf>> {
     let mut files: HashSet<PathBuf> = HashSet::with_capacity(1);
     if name == "Demo614_2" {
         // Hack because I have no idea why `Demo614_2.sbeventpack` has a timeline
         files.insert("EventFlow/Demo614_2.bfevtm".into());
     }
     for subevent in event_info.values() {
-        let subevent = subevent.as_hash()?;
+        let subevent = subevent.as_map()?;
         if let Some(Byml::Bool(has_demo)) = subevent.get("demo_event") {
             if *has_demo {
                 files.insert(jstr!("Demo/{name}.bdemo.yml").into());
